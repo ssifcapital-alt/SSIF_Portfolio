@@ -1,5 +1,4 @@
 import os
-import uuid
 import secrets
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -8,19 +7,22 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from webull_client import (
-    get_client, ACCOUNT_ID,
+from alpaca_client import (
     fetch_balance, fetch_positions, fetch_orders,
-    place_order as wb_place_order,
-    cancel_order as wb_cancel_order,
+    place_order as _place_order,
+    cancel_order as _cancel_order,
+    fetch_quotes,
 )
 
 app = FastAPI(title="SSIF Dashboard")
 security = HTTPBasic()
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
 TEAM_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "changeme")
 
+WATCHLIST = ["META", "GOOGL", "TSLA", "AMD", "GLD", "TLT"]
+
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
 
 def auth(creds: HTTPBasicCredentials = Depends(security)):
     valid = secrets.compare_digest(
@@ -36,71 +38,69 @@ def auth(creds: HTTPBasicCredentials = Depends(security)):
     return creds.username
 
 
-# ── Portfolio routes ───────────────────────────────────────────────────────────
+# ── Portfolio ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/balance")
 def get_balance(user: str = Depends(auth)):
-    return fetch_balance(get_client(), ACCOUNT_ID)
-
+    return fetch_balance()
 
 @app.get("/api/positions")
 def get_positions(user: str = Depends(auth)):
-    return fetch_positions(get_client(), ACCOUNT_ID)
-
+    return fetch_positions()
 
 @app.get("/api/orders")
 def get_orders(user: str = Depends(auth)):
-    return fetch_orders(get_client(), ACCOUNT_ID)
+    return fetch_orders()
 
 
-# ── Trade routes ───────────────────────────────────────────────────────────────
+# ── Market data ────────────────────────────────────────────────────────────────
+
+@app.get("/api/quotes")
+def get_quotes(symbols: str = ",".join(WATCHLIST), user: str = Depends(auth)):
+    """Pass ?symbols=AAPL,TSLA or defaults to watchlist."""
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return fetch_quotes(sym_list)
+
+
+# ── Trading ────────────────────────────────────────────────────────────────────
 
 class OrderRequest(BaseModel):
     symbol: str
-    side: str              # "BUY" or "SELL"
-    order_type: str        # "MARKET", "LIMIT", "STOP_LOSS", "STOP_LOSS_LIMIT", "TRAILING_STOP_LOSS"
-    quantity: str          # number of shares as string
+    side: str                    # "BUY" or "SELL"
+    order_type: str              # "MARKET", "LIMIT", "STOP", "STOP_LIMIT"
+    quantity: str
     limit_price: str | None = None
-    time_in_force: str = "DAY"   # "DAY" or "GTC"
+    stop_price: str | None = None
+    time_in_force: str = "day"   # "day" or "gtc"
 
 
 @app.post("/api/orders/place")
 def place_order(order: OrderRequest, user: str = Depends(auth)):
-    payload = {
-        "client_order_id":         uuid.uuid4().hex,
-        "combo_type":              "NORMAL",
-        "symbol":                  order.symbol.upper(),
-        "instrument_type":         "EQUITY",
-        "market":                  "US",
-        "order_type":              order.order_type,
-        "quantity":                order.quantity,
-        "side":                    order.side,
-        "time_in_force":           order.time_in_force,
-        "support_trading_session": "CORE",
-        "entrust_type":            "QTY",
-    }
-    if order.limit_price and order.order_type in ("LIMIT", "STOP_LOSS_LIMIT"):
-        payload["limit_price"] = order.limit_price
-
-    return wb_place_order(get_client(), ACCOUNT_ID, payload)
-
+    return _place_order(
+        symbol=order.symbol.upper(),
+        side=order.side,
+        order_type=order.order_type,
+        quantity=order.quantity,
+        limit_price=order.limit_price,
+        stop_price=order.stop_price,
+        time_in_force=order.time_in_force,
+    )
 
 @app.delete("/api/orders/{order_id}")
 def cancel_order(order_id: str, user: str = Depends(auth)):
-    return wb_cancel_order(get_client(), ACCOUNT_ID, order_id)
+    return _cancel_order(order_id)
 
 
-# ── Health check ───────────────────────────────────────────────────────────────
+# ── Health ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-# ── Serve frontend ─────────────────────────────────────────────────────────────
+# ── Frontend ───────────────────────────────────────────────────────────────────
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
 
 @app.get("/")
 def root():

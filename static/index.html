@@ -209,7 +209,7 @@
   <div class="hdr">
     <div>
       <div class="hdr-title">SSIF Portfolio</div>
-      <div class="hdr-sub">Paper trading · Webull · <span id="clk"></span></div>
+      <div class="hdr-sub">Paper trading · Alpaca · <span id="clk"></span></div>
     </div>
     <div class="hdr-right">
       <span class="dot" id="conn-dot"></span>
@@ -353,9 +353,8 @@
             <select id="otype" onchange="toggleLimit(); updatePreview()">
               <option value="MARKET">Market</option>
               <option value="LIMIT">Limit</option>
-              <option value="STOP_LOSS">Stop loss</option>
-              <option value="STOP_LOSS_LIMIT">Stop loss limit</option>
-              <option value="TRAILING_STOP_LOSS">Trailing stop</option>
+              <option value="STOP">Stop loss</option>
+              <option value="STOP_LIMIT">Stop loss limit</option>
             </select>
           </div>
           <div id="lp-group" style="display:none">
@@ -369,8 +368,8 @@
           <div>
             <label>Time in force</label>
             <select id="tif">
-              <option value="DAY">Day</option>
-              <option value="GTC">GTC</option>
+              <option value="day">Day</option>
+              <option value="gtc">GTC</option>
             </select>
           </div>
 
@@ -534,12 +533,13 @@ async function loadBalance() {
   setConnected(true);
   balanceData = data;
 
-  // Map Webull response fields — adjust these keys to match your actual API response
-  const netLiq   = data.net_liquidation     ?? data.totalMarketValue ?? 0;
-  const initVal  = data.initial_balance     ?? 100000;
-  const dayPnl   = data.day_profit_loss     ?? data.dailyPnl ?? 0;
+  // Alpaca account fields
+  const netLiq   = parseFloat(data.portfolio_value ?? 0);
+  const initVal  = 100000; // Alpaca paper accounts start at $100k
+  const lastEq   = parseFloat(data.last_equity ?? netLiq);
+  const dayPnl   = netLiq - lastEq;
   const totalPnl = netLiq - initVal;
-  const bp       = data.buying_power        ?? data.cashBalance ?? 0;
+  const bp       = parseFloat(data.buying_power ?? 0);
 
   document.getElementById('m-val').textContent     = fmt(netLiq, 0);
   document.getElementById('m-val-sub').textContent  = 'Started at ' + fmt(initVal, 0);
@@ -554,9 +554,11 @@ async function loadBalance() {
   document.getElementById('m-bp').textContent      = fmt(bp, 0);
 
   // Snapshot on trade tab
-  document.getElementById('snap-bp').textContent  = fmt(bp, 0);
-  document.getElementById('snap-pnl').textContent = signedFmt(totalPnl, 0);
-  document.getElementById('snap-pnl').className   = 'sv ' + colorClass(totalPnl);
+  const bp2      = parseFloat(data.buying_power ?? 0);
+  const totalPnl2 = parseFloat(data.portfolio_value ?? 0) - 100000;
+  document.getElementById('snap-bp').textContent  = fmt(bp2, 0);
+  document.getElementById('snap-pnl').textContent = signedFmt(totalPnl2, 0);
+  document.getElementById('snap-pnl').className   = 'sv ' + colorClass(totalPnl2);
 }
 
 // ─────────────────────────────────────────────
@@ -566,8 +568,8 @@ async function loadPositions() {
   const data = await apiFetch('/api/positions');
   if (!data) return;
 
-  // Webull returns an array of position objects
-  positions = Array.isArray(data) ? data : (data.positions ?? []);
+  // Alpaca returns a flat array of position objects
+  positions = Array.isArray(data) ? data : [];
   document.getElementById('snap-pos').textContent = positions.length;
   renderPositions();
   renderDonut();
@@ -580,15 +582,15 @@ function renderPositions() {
     return;
   }
 
-  // Adjust field names to match Webull API response
+  // Alpaca position field names
   tbody.innerHTML = positions.map(p => {
-    const sym     = p.ticker?.symbol ?? p.symbol ?? '—';
-    const qty     = p.position ?? p.quantity ?? '—';
-    const avgCost = p.cost_price ?? p.averageCost ?? 0;
-    const last    = p.last_price ?? p.marketPrice ?? 0;
-    const pnl     = p.unrealized_profit_loss ?? p.unrealizedPnl ?? 0;
-    const pnlPct  = p.unrealized_profit_loss_rate ?? (avgCost ? (pnl / (avgCost * qty)) : 0);
-    const vsIdx   = '—'; // populate if you have benchmark comparison data
+    const sym     = p.symbol ?? '—';
+    const qty     = p.qty ?? '—';
+    const avgCost = parseFloat(p.avg_entry_price ?? 0);
+    const last    = parseFloat(p.current_price ?? 0);
+    const pnl     = parseFloat(p.unrealized_pl ?? 0);
+    const pnlPct  = parseFloat(p.unrealized_plpc ?? 0) * 100;
+    const vsIdx   = '—';
 
     return `<tr>
       <td class="sym">${sym}</td>
@@ -608,8 +610,8 @@ function renderDonut() {
 
   let equityVal = 0, etfVal = 0, cryptoVal = 0;
   positions.forEach(p => {
-    const sym = (p.ticker?.symbol ?? p.symbol ?? '').toUpperCase();
-    const val = (p.last_price ?? p.marketPrice ?? 0) * (p.position ?? p.quantity ?? 0);
+    const sym = (p.symbol ?? '').toUpperCase();
+    const val = parseFloat(p.market_value ?? 0);
     if (cryptoSymbols.includes(sym))   cryptoVal += val;
     else if (etfSymbols.includes(sym)) etfVal    += val;
     else                               equityVal += val;
@@ -661,15 +663,26 @@ function drawSparkline(id, data, color) {
   g.stroke();
 }
 
-function loadIndexData() {
-  // These will come from a market data endpoint when wired to real data
-  // For now using representative static values — replace with API call when available
-  document.getElementById('spy-val').innerHTML = '5,241 <span class="up" style="font-size:12px;font-weight:400">+0.83%</span>';
-  document.getElementById('qqq-val').innerHTML = '18,432 <span class="up" style="font-size:12px;font-weight:400">+1.12%</span>';
+async function loadIndexData() {
+  const data = await apiFetch('/api/quotes?symbols=SPY,QQQ');
+  if (data) {
+    const spy = data['SPY'];
+    const qqq = data['QQQ'];
+    if (spy) {
+      const spyChg = spy.prev_close ? ((spy.last - spy.prev_close) / spy.prev_close * 100) : 0;
+      document.getElementById('spy-val').innerHTML =
+        fmt(spy.last, 2) + ' <span class="' + colorClass(spyChg) + '" style="font-size:12px;font-weight:400">' + fmtPct(spyChg) + '</span>';
+      drawSparkline('spk1', [spy.open, spy.low, spy.high, spy.last], spyChg >= 0 ? '#1a8a4a' : '#c0392b');
+    }
+    if (qqq) {
+      const qqqChg = qqq.prev_close ? ((qqq.last - qqq.prev_close) / qqq.prev_close * 100) : 0;
+      document.getElementById('qqq-val').innerHTML =
+        fmt(qqq.last, 2) + ' <span class="' + colorClass(qqqChg) + '" style="font-size:12px;font-weight:400">' + fmtPct(qqqChg) + '</span>';
+      drawSparkline('spk2', [qqq.open, qqq.low, qqq.high, qqq.last], qqqChg >= 0 ? '#1a8a4a' : '#c0392b');
+    }
+  }
   document.getElementById('beta-val').textContent = '—';
   document.getElementById('risk-stats').innerHTML = 'Sharpe — · Max DD —';
-  drawSparkline('spk1', [510,514,508,516,518,512,520,524], '#1a8a4a');
-  drawSparkline('spk2', [17800,17950,17820,18100,18200,18050,18350,18432], '#1a8a4a');
 }
 
 // ─────────────────────────────────────────────
@@ -689,7 +702,7 @@ function setDir(d) {
 function toggleLimit() {
   const t = document.getElementById('otype').value;
   document.getElementById('lp-group').style.display =
-    (t === 'LIMIT' || t === 'STOP_LOSS_LIMIT') ? 'block' : 'none';
+    (t === 'LIMIT' || t === 'STOP_LIMIT') ? 'block' : 'none';
 }
 
 function updatePreview() {
@@ -737,7 +750,7 @@ async function submitOrder() {
     quantity:    qty,
     time_in_force: tif,
   };
-  if (lp && (type === 'LIMIT' || type === 'STOP_LOSS_LIMIT')) {
+  if (lp && (type === 'LIMIT' || type === 'STOP_LIMIT')) {
     payload.limit_price = lp;
   }
 
@@ -775,9 +788,9 @@ async function loadOrders() {
   const data = await apiFetch('/api/orders');
   if (!data) return;
 
-  const orders = Array.isArray(data) ? data : (data.orders ?? []);
+  const orders = Array.isArray(data) ? data : [];
   document.getElementById('snap-ord').textContent =
-    orders.filter(o => o.status === 'PENDING' || o.status === 'WORKING').length;
+    orders.filter(o => o.status === 'accepted' || o.status === 'pending_new' || o.status === 'new').length;
 
   const list = document.getElementById('order-list');
   if (!orders.length) {
@@ -785,16 +798,15 @@ async function loadOrders() {
     return;
   }
 
-  // Show most recent 6 orders — adjust field names to match Webull response
   list.innerHTML = orders.slice(0, 6).map(o => {
-    const sym    = o.ticker?.symbol ?? o.symbol ?? '—';
-    const side   = o.action ?? o.side ?? '—';
-    const qty    = o.filled_quantity ?? o.quantity ?? '—';
-    const status = o.status ?? '—';
+    const sym    = o.symbol ?? '—';
+    const side   = o.side ?? '—';
+    const qty    = o.filled_qty && parseFloat(o.filled_qty) > 0 ? o.filled_qty : (o.qty ?? '—');
+    const status = (o.status ?? '—').toUpperCase();
 
     let badgeCls = 'pend';
-    if (status === 'FILLED')    badgeCls = 'fill';
-    if (status === 'CANCELLED' || status === 'REJECTED') badgeCls = 'can';
+    if (status === 'FILLED')                           badgeCls = 'fill';
+    if (status === 'CANCELED' || status === 'REJECTED') badgeCls = 'can';
 
     return `<div class="or">
       <span><span class="sym">${sym}</span> · ${side.toLowerCase()} ${qty}</span>
@@ -808,67 +820,30 @@ async function loadOrders() {
 // ─────────────────────────────────────────────
 let activeWatch = null;
 
-// Mock quote data — replace with real market data API calls when available
-const MOCK_QUOTES = {
-  META:  { last: 507.20, chg: 1.84, signal: 'Buy',  mc: '$1.29T', pe: '26.4×', h52: '$531.49', l52: '$414.50', vol: '14.2M', beta: '1.31' },
-  GOOGL: { last: 174.80, chg: 0.61, signal: 'Hold', mc: '$2.18T', pe: '21.2×', h52: '$207.05', l52: '$155.60', vol: '22.1M', beta: '1.05' },
-  TSLA:  { last: 178.30, chg: -2.14, signal: 'Sell', mc: '$569B',  pe: '47.3×', h52: '$271.00', l52: '$138.80', vol: '96.4M', beta: '2.31' },
-  AMD:   { last: 161.40, chg: 3.22, signal: 'Buy',  mc: '$261B',  pe: '38.9×', h52: '$227.30', l52: '$117.60', vol: '54.3M', beta: '1.73' },
-  GLD:   { last: 224.10, chg: 0.30, signal: 'Hold', mc: '$69B',   pe: '—',     h52: '$244.20', l52: '$179.40', vol: '8.6M',  beta: '0.11' },
-  TLT:   { last: 91.80,  chg: -0.42, signal: 'Hold', mc: '$53B',   pe: '—',     h52: '$101.40', l52: '$82.40',  vol: '31.2M', beta: '-0.22' },
-};
+let liveQuotes = {};
 
-// Mock news — replace with /api/news/{symbol} endpoint when wired
-const MOCK_NEWS = {
-  META:  [
-    { headline: "Meta's AI assistant reaches 1 billion users, Zuckerberg confirms at earnings call", src: 'Bloomberg', age: '2h ago', sent: 'pos' },
-    { headline: 'Advertising revenue beats estimates by 8% as Reels monetisation accelerates into Q2', src: 'Reuters', age: '4h ago', sent: 'pos' },
-    { headline: 'EU regulators open new probe into Meta\'s data practices under Digital Markets Act', src: 'FT', age: '6h ago', sent: 'neg' },
-    { headline: 'Meta doubles down on Ray-Ban smart glasses with new enterprise edition', src: 'WSJ', age: '9h ago', sent: 'neu' },
-    { headline: 'Analyst upgrades META to overweight, raises price target to $580', src: 'Barclays', age: '1d ago', sent: 'pos' },
-  ],
-  GOOGL: [
-    { headline: 'Google Cloud revenue grows 28% YoY, driven by enterprise AI adoption', src: 'Bloomberg', age: '1h ago', sent: 'pos' },
-    { headline: 'DOJ antitrust remedy trial enters second week, breakup scenarios discussed', src: 'FT', age: '5h ago', sent: 'neg' },
-    { headline: 'Gemini Ultra integration into Workspace sees strong enterprise uptake', src: 'Reuters', age: '8h ago', sent: 'pos' },
-  ],
-  TSLA: [
-    { headline: 'Tesla Q1 deliveries miss consensus by 12%, shares fall in after-hours', src: 'Reuters', age: '3h ago', sent: 'neg' },
-    { headline: 'FSD version 13 rollout expands to 500,000 vehicles in North America', src: 'Bloomberg', age: '7h ago', sent: 'pos' },
-    { headline: 'Price cuts in China deepen margin concerns heading into Q2', src: 'WSJ', age: '1d ago', sent: 'neg' },
-  ],
-  AMD: [
-    { headline: 'AMD MI300X demand outpaces supply as hyperscalers accelerate AI buildout', src: 'Bloomberg', age: '2h ago', sent: 'pos' },
-    { headline: 'Data centre GPU revenue expected to reach $4B in Q2, analyst says', src: 'Reuters', age: '6h ago', sent: 'pos' },
-    { headline: 'Intel partnership on x86 ecosystem raises competitive uncertainty', src: 'FT', age: '1d ago', sent: 'neu' },
-  ],
-  GLD: [
-    { headline: 'Gold holds near record highs as Fed rate cut bets firm ahead of CPI', src: 'Reuters', age: '1h ago', sent: 'pos' },
-    { headline: 'Central bank gold buying hits highest quarterly level since 2022', src: 'Bloomberg', age: '4h ago', sent: 'pos' },
-    { headline: 'Stronger dollar caps gold gains despite safe-haven demand', src: 'WSJ', age: '9h ago', sent: 'neu' },
-  ],
-  TLT: [
-    { headline: '10-year Treasury yield ticks up to 4.28% ahead of jobs report', src: 'Bloomberg', age: '2h ago', sent: 'neg' },
-    { headline: 'Fed minutes signal patience on rate cuts, bonds sell off modestly', src: 'Reuters', age: '5h ago', sent: 'neg' },
-    { headline: 'Duration risk back in focus as term premium climbs from 2024 lows', src: 'FT', age: '1d ago', sent: 'neu' },
-  ],
-};
+async function loadWatchlistQuotes() {
+  const symbols = WATCHLIST.map(w => w.symbol).join(',');
+  const data = await apiFetch('/api/quotes?symbols=' + symbols);
+  if (data) liveQuotes = data;
+  buildWatchlist();
+}
 
 function buildWatchlist() {
   const container = document.getElementById('watch-rows');
   container.innerHTML = WATCHLIST.map((item, i) => {
-    const q   = MOCK_QUOTES[item.symbol] ?? {};
-    const chg = q.chg ?? 0;
-    const sigCls = q.signal === 'Buy' ? 'up' : q.signal === 'Sell' ? 'dn' : '';
+    const q   = liveQuotes[item.symbol] ?? {};
+    const last = q.last ?? null;
+    const prevClose = q.prev_close ?? null;
+    const chgPct = (last && prevClose) ? ((last - prevClose) / prevClose * 100) : null;
     return `<div class="wrow${i === 0 ? ' sel' : ''}" onclick="selectWatch(this,'${item.symbol}')">
       <span class="sym">${item.symbol}</span>
-      <span>${fmt(q.last)}</span>
-      <span class="${colorClass(chg)}">${fmtPct(chg)}</span>
-      <span class="${sigCls}" style="font-size:12px">${q.signal ?? '—'}</span>
+      <span>${last != null ? fmt(last) : '—'}</span>
+      <span class="${chgPct != null ? colorClass(chgPct) : ''}">${chgPct != null ? fmtPct(chgPct) : '—'}</span>
+      <span style="font-size:12px;color:var(--text-secondary)">—</span>
     </div>`;
   }).join('');
 
-  // Auto-select first
   selectWatch(container.querySelector('.wrow'), WATCHLIST[0].symbol);
 }
 
@@ -879,39 +854,26 @@ function selectWatch(row, sym) {
   document.getElementById('wsym').textContent = sym;
   document.getElementById('nsym').textContent = sym;
   renderWatchStats(sym);
-  renderNews(sym);
+  document.getElementById('news-list').innerHTML = '<div class="empty">News feed coming soon.</div>';
 }
 
 function renderWatchStats(sym) {
-  const q = MOCK_QUOTES[sym] ?? {};
+  const q = liveQuotes[sym] ?? {};
+  const prevClose = q.prev_close ?? null;
+  const chgPct = (q.last && prevClose) ? ((q.last - prevClose) / prevClose * 100) : null;
   const fields = [
-    ['Market cap', q.mc ?? '—'], ['P/E ratio', q.pe ?? '—'],
-    ['52w high',   q.h52 ?? '—'], ['52w low', q.l52 ?? '—'],
-    ['Avg volume', q.vol ?? '—'], ['Beta', q.beta ?? '—'],
+    ['Last price',  q.last     != null ? fmt(q.last)     : '—'],
+    ['Prev close',  prevClose  != null ? fmt(prevClose)   : '—'],
+    ['Day change',  chgPct     != null ? fmtPct(chgPct)  : '—'],
+    ['Day open',    q.open     != null ? fmt(q.open)     : '—'],
+    ['Day high',    q.high     != null ? fmt(q.high)     : '—'],
+    ['Day low',     q.low      != null ? fmt(q.low)      : '—'],
+    ['Bid',         q.bid      != null ? fmt(q.bid)      : '—'],
+    ['Ask',         q.ask      != null ? fmt(q.ask)      : '—'],
   ];
   document.getElementById('wstats').innerHTML = fields.map(([l, v]) =>
     `<div class="stc"><div class="stl">${l}</div><div class="stv">${v}</div></div>`
   ).join('');
-}
-
-function renderNews(sym) {
-  const news = MOCK_NEWS[sym] ?? [];
-  const sentMap = { pos: ['pos', 'Positive'], neg: ['neg', 'Negative'], neu: ['neu', 'Neutral'] };
-  if (!news.length) {
-    document.getElementById('news-list').innerHTML = '<div class="empty">No news available.</div>';
-    return;
-  }
-  document.getElementById('news-list').innerHTML = news.map(n => {
-    const [cls, label] = sentMap[n.sent] ?? ['neu', 'Neutral'];
-    return `<div class="nitem">
-      <div class="nh">${n.headline}</div>
-      <div class="nm">
-        <span class="nsrc">${n.src}</span>
-        <span>${n.age}</span>
-        <span class="badge ${cls}">${label}</span>
-      </div>
-    </div>`;
-  }).join('');
 }
 
 // ─────────────────────────────────────────────
@@ -920,7 +882,7 @@ function renderNews(sym) {
 (async function init() {
   await Promise.all([loadBalance(), loadPositions(), loadOrders()]);
   loadIndexData();
-  buildWatchlist();
+  loadWatchlistQuotes();
   updatePreview();
 })();
 </script>

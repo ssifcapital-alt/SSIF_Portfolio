@@ -6,13 +6,9 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
-      - key: WEBULL_APP_KEY
+      - key: ALPACA_API_KEY
         sync: false
-      - key: WEBULL_APP_SECRET
-        sync: false
-      - key: WEBULL_ACCOUNT_ID
-        sync: false
-      - key: WEBULL_ENDPOINT
+      - key: ALPACA_API_SECRET
         sync: false
       - key: DASHBOARD_PASSWORD
         sync: false
