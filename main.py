@@ -98,6 +98,21 @@ def health():
     return {"status": "ok"}
 
 
+# ── Temporary debug — REMOVE AFTER FIXING 401 ─────────────────────────────────
+
+@app.get("/debug")
+def debug():
+    key = os.environ.get("ALPACA_API_KEY", "NOT SET")
+    secret = os.environ.get("ALPACA_API_SECRET", "NOT SET")
+    return {
+        "key_set": key != "NOT SET",
+        "key_length": len(key),
+        "key_prefix": key[:6] if len(key) > 6 else key,
+        "secret_set": secret != "NOT SET",
+        "secret_length": len(secret),
+    }
+
+
 # ── Frontend ───────────────────────────────────────────────────────────────────
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
