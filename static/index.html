@@ -231,7 +231,9 @@
   <div class="nav">
     <button class="tab on" onclick="go('pf',this)">Portfolio</button>
     <button class="tab" onclick="go('tr',this)">Trade</button>
-    <button class="tab" onclick="go('wl',this)">Watchlist</button>
+    <button class="tab" onclick="go('op',this)">Options</button>
+    <button class="tab" onclick="go('wl',this); loadWatchlistQuotes()">Watchlist</button>
+    <button class="tab" onclick="go('rs',this)">Research</button>
   </div>
 
   <!-- ── PAGE: PORTFOLIO ── -->
@@ -345,8 +347,20 @@
             </div>
           </div>
           <div>
+            <label>Quick quote</label>
+            <div style="display:flex;gap:6px">
+              <input type="text" id="qqsym" placeholder="Search ticker…" style="flex:1;text-transform:uppercase"
+                     onkeydown="if(event.key==='Enter') fetchQuickQuote()"/>
+              <button onclick="fetchQuickQuote()"
+                style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:0 12px;cursor:pointer;font-size:13px;white-space:nowrap">
+                Look up
+              </button>
+            </div>
+            <div id="qq-result" style="margin-top:8px;display:none;background:var(--bg-secondary);border-radius:8px;padding:10px 12px;font-size:13px"></div>
+          </div>
+          <div>
             <label>Symbol</label>
-            <input type="text" id="tsym" value="AAPL" placeholder="e.g. AAPL" oninput="updatePreview()"/>
+            <input type="text" id="tsym" value="AAPL" placeholder="e.g. AAPL" oninput="tradeSymQuote={};updatePreview()"/>
           </div>
           <div>
             <label>Order type</label>
@@ -379,7 +393,19 @@
             <div class="pr"><span class="pk">Direction</span><span class="pv up" id="pd">Buy</span></div>
             <div class="pr"><span class="pk">Quantity</span><span class="pv" id="pq">10 shares</span></div>
             <div class="pr"><span class="pk">Order type</span><span class="pv" id="pot">Market</span></div>
+            <div class="pr"><span class="pk">Last price</span><span class="pv" id="plast">—</span></div>
             <div class="pr"><span class="pk">Est. total</span><span class="pv" id="ptot">—</span></div>
+            <div class="pr"><span class="pk">% of buying power</span><span class="pv" id="pbp">—</span></div>
+          </div>
+          <!-- Buying power bar -->
+          <div style="margin-top:4px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-bottom:4px">
+              <span>Buying power used</span>
+              <span id="bp-bar-label">—</span>
+            </div>
+            <div style="height:6px;background:var(--bg-tertiary);border-radius:4px;overflow:hidden">
+              <div id="bp-bar" style="height:100%;width:0%;background:var(--green);border-radius:4px;transition:width 0.3s,background 0.3s"></div>
+            </div>
           </div>
 
           <button class="obtn b" id="obtn" onclick="submitOrder()">Submit buy order</button>
@@ -408,13 +434,137 @@
     </div>
   </div><!-- /trade -->
 
+  <!-- ── PAGE: OPTIONS ── -->
+  <div id="pg-op" class="pg">
+    <div class="tgrid">
+
+      <!-- Options chain lookup -->
+      <div class="panel">
+        <div class="ph">Options chain</div>
+        <div class="fl">
+          <div>
+            <label>Underlying symbol</label>
+            <input type="text" id="opt-underlying" value="AAPL" placeholder="e.g. AAPL" style="text-transform:uppercase"/>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+              <label>Expiry from</label>
+              <input type="date" id="opt-exp-gte"/>
+            </div>
+            <div>
+              <label>Expiry to</label>
+              <input type="date" id="opt-exp-lte"/>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+              <label>Type</label>
+              <select id="opt-type">
+                <option value="">All</option>
+                <option value="call">Call</option>
+                <option value="put">Put</option>
+              </select>
+            </div>
+            <div>
+              <label>Strike range ($)</label>
+              <div style="display:flex;gap:4px;align-items:center">
+                <input type="number" id="opt-strike-min" placeholder="Min" step="0.5" style="width:50%"/>
+                <span style="color:var(--text-secondary)">–</span>
+                <input type="number" id="opt-strike-max" placeholder="Max" step="0.5" style="width:50%"/>
+              </div>
+            </div>
+          </div>
+          <button class="obtn" style="background:var(--blue);color:#fff" onclick="loadOptionChain()">Search contracts</button>
+        </div>
+
+        <div style="margin-top:16px;overflow-x:auto">
+          <table class="htable" id="opt-chain-table">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Bid</th><th>Ask</th><th>Mid</th><th>OI</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="opt-chain-body">
+              <tr><td colspan="9" class="loading">Search for contracts above.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Options order form -->
+      <div class="rpanel">
+        <div class="panel">
+          <div class="ph">Place options order</div>
+          <div class="fl">
+            <div>
+              <label>Direction</label>
+              <div class="seg">
+                <button class="sb buy" id="opt-bb" onclick="setOptDir('BUY')">Buy</button>
+                <button class="sb" id="opt-bs" onclick="setOptDir('SELL')">Sell</button>
+              </div>
+            </div>
+            <div>
+              <label>Option symbol (OCC)</label>
+              <input type="text" id="opt-sym" placeholder="e.g. AAPL240119C00150000"/>
+            </div>
+            <div>
+              <label>Order type</label>
+              <select id="opt-otype" onchange="toggleOptLimit()">
+                <option value="LIMIT">Limit</option>
+                <option value="MARKET">Market</option>
+              </select>
+            </div>
+            <div id="opt-lp-group">
+              <label>Limit price (per contract $)</label>
+              <input type="number" id="opt-lp" step="0.01" placeholder="e.g. 2.50"/>
+            </div>
+            <div>
+              <label>Contracts</label>
+              <input type="number" id="opt-qty" value="1" min="1" step="1"/>
+            </div>
+            <div>
+              <label>Time in force</label>
+              <select id="opt-tif">
+                <option value="day">Day</option>
+                <option value="gtc">GTC</option>
+              </select>
+            </div>
+            <div class="prev" id="opt-prev">
+              <div class="pr"><span class="pk">Symbol</span><span class="pv" id="opt-ps">—</span></div>
+              <div class="pr"><span class="pk">Direction</span><span class="pv up" id="opt-pd">Buy</span></div>
+              <div class="pr"><span class="pk">Contracts</span><span class="pv" id="opt-pq">1</span></div>
+              <div class="pr"><span class="pk">Order type</span><span class="pv" id="opt-pot">Limit</span></div>
+            </div>
+            <button class="obtn b" id="opt-obtn" onclick="submitOptionOrder()">Submit buy order</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- /options -->
+
   <!-- ── PAGE: WATCHLIST ── -->
   <div id="pg-wl" class="pg">
     <div class="wgrid">
 
-      <!-- Left: watchlist table + stats -->
+      <!-- Left: watchlist table + stats + editor -->
       <div>
         <div class="panel" style="padding:0;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px 0">
+            <div class="ph" style="margin:0">Watchlist</div>
+            <button onclick="toggleWatchlistEditor()" style="font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;color:var(--text-secondary)">Edit</button>
+          </div>
+
+          <!-- Editor (hidden by default) -->
+          <div id="wl-editor" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border)">
+            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">Enter symbols separated by commas</div>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="wl-input" placeholder="META, GOOGL, TSLA, AMD..." style="flex:1;font-size:13px"/>
+              <button onclick="saveWatchlist()" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px">Save</button>
+            </div>
+            <div id="wl-editor-msg" style="font-size:12px;margin-top:6px;color:var(--green)"></div>
+          </div>
+
           <div class="wrow wh">
             <span>Symbol</span><span>Last</span><span>Chg %</span><span>Signal</span>
           </div>
@@ -434,6 +584,56 @@
 
     </div>
   </div><!-- /watchlist -->
+
+  <!-- ── PAGE: RESEARCH ── -->
+  <div id="pg-rs" class="pg">
+    <div style="max-width:860px;margin:0 auto">
+
+      <div class="panel">
+        <div class="ph">Financial data parser</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+          Upload a Bloomberg PDF, CSV, or XLSX export. The analyser will extract key financials and give you a structured breakdown.
+        </div>
+
+        <!-- Upload area -->
+        <div id="rs-drop" onclick="document.getElementById('rs-file').click()"
+          style="border:2px dashed var(--border-mid);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:background 0.2s"
+          ondragover="event.preventDefault();this.style.background='var(--bg-tertiary)'"
+          ondragleave="this.style.background=''"
+          ondrop="handleRsDrop(event)">
+          <div style="font-size:28px;margin-bottom:8px">📄</div>
+          <div style="font-weight:500;margin-bottom:4px">Drop file here or click to upload</div>
+          <div style="font-size:12px;color:var(--text-secondary)">PDF · CSV · XLSX — max 10MB</div>
+          <input type="file" id="rs-file" accept=".pdf,.csv,.xlsx,.xls" style="display:none" onchange="handleRsFile(event)"/>
+        </div>
+
+        <div id="rs-file-name" style="margin-top:10px;font-size:13px;color:var(--text-secondary);display:none"></div>
+
+        <!-- Prompt override -->
+        <div style="margin-top:14px">
+          <label style="font-size:12px;color:var(--text-secondary)">Focus area (optional)</label>
+          <input type="text" id="rs-prompt"
+            placeholder="e.g. focus on revenue growth, margins, and debt levels"
+            style="margin-top:4px"/>
+        </div>
+
+        <button onclick="runResearch()"
+          style="margin-top:14px;background:var(--blue);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer;font-family:inherit;width:100%">
+          Analyse document
+        </button>
+      </div>
+
+      <!-- Results -->
+      <div class="panel" id="rs-result-panel" style="display:none;margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div class="ph" style="margin:0">Analysis</div>
+          <div id="rs-file-tag" style="font-size:12px;color:var(--text-secondary);background:var(--bg-secondary);padding:3px 10px;border-radius:12px"></div>
+        </div>
+        <div id="rs-result" style="font-size:14px;line-height:1.7;white-space:pre-wrap;color:var(--text-primary)"></div>
+      </div>
+
+    </div>
+  </div><!-- /research -->
 
 </div><!-- /shell -->
 
@@ -705,6 +905,9 @@ function toggleLimit() {
     (t === 'LIMIT' || t === 'STOP_LIMIT') ? 'block' : 'none';
 }
 
+let tradeSymQuote = {}; // cached quote for current trade symbol
+let tradeSymTimer = null;
+
 function updatePreview() {
   const sym  = (document.getElementById('tsym').value || '—').toUpperCase();
   const qty  = parseFloat(document.getElementById('qty').value) || 0;
@@ -716,11 +919,45 @@ function updatePreview() {
   document.getElementById('pot').textContent = type.replace(/_/g, ' ').toLowerCase()
     .replace(/\b\w/g, c => c.toUpperCase());
 
-  if (type === 'LIMIT' || type === 'STOP_LOSS_LIMIT') {
-    const price = parseFloat(lp) || 0;
-    document.getElementById('ptot').textContent = fmt(qty * price);
+  // Debounce live price fetch when symbol changes
+  clearTimeout(tradeSymTimer);
+  if (sym.length >= 1 && sym !== '—') {
+    tradeSymTimer = setTimeout(() => fetchTradeSymQuote(sym), 600);
+  }
+
+  // Estimate cost
+  let estTotal = 0;
+  if (type === 'LIMIT' || type === 'STOP_LIMIT') {
+    estTotal = qty * (parseFloat(lp) || 0);
+  } else if (tradeSymQuote.last) {
+    estTotal = qty * tradeSymQuote.last;
+  }
+
+  document.getElementById('plast').textContent = tradeSymQuote.last ? fmt(tradeSymQuote.last) : '—';
+  document.getElementById('ptot').textContent  = estTotal ? fmt(estTotal) : (type === 'MARKET' ? 'Market price' : '—');
+
+  // Buying power %
+  const bp = parseFloat(balanceData.buying_power ?? 0);
+  if (bp > 0 && estTotal > 0) {
+    const pct = Math.min((estTotal / bp) * 100, 100);
+    const pctStr = pct.toFixed(1) + '%';
+    document.getElementById('pbp').textContent       = pctStr + ' of buying power';
+    document.getElementById('bp-bar-label').textContent = fmt(estTotal) + ' / ' + fmt(bp);
+    const bar = document.getElementById('bp-bar');
+    bar.style.width = pct + '%';
+    bar.style.background = pct > 90 ? 'var(--red)' : pct > 60 ? '#e67e22' : 'var(--green)';
   } else {
-    document.getElementById('ptot').textContent = 'Market price';
+    document.getElementById('pbp').textContent       = '—';
+    document.getElementById('bp-bar-label').textContent = '—';
+    document.getElementById('bp-bar').style.width   = '0%';
+  }
+}
+
+async function fetchTradeSymQuote(sym) {
+  const data = await apiFetch('/api/quotes?symbols=' + sym);
+  if (data && data[sym]) {
+    tradeSymQuote = data[sym];
+    updatePreview(); // re-render with live price
   }
 }
 
@@ -877,13 +1114,332 @@ function renderWatchStats(sym) {
 }
 
 // ─────────────────────────────────────────────
+// OPTIONS — STATE & HELPERS
+// ─────────────────────────────────────────────
+let optDir = 'BUY';
+
+function setOptDir(d) {
+  optDir = d;
+  document.getElementById('opt-bb').className = 'sb' + (d === 'BUY' ? ' buy' : '');
+  document.getElementById('opt-bs').className = 'sb' + (d === 'SELL' ? ' sell' : '');
+  document.getElementById('opt-obtn').textContent = 'Submit ' + d.toLowerCase() + ' order';
+  document.getElementById('opt-obtn').className = 'obtn ' + (d === 'BUY' ? 'b' : 's');
+  document.getElementById('opt-pd').textContent = d.charAt(0) + d.slice(1).toLowerCase();
+  document.getElementById('opt-pd').className = 'pv ' + (d === 'BUY' ? 'up' : 'dn');
+}
+
+function toggleOptLimit() {
+  const t = document.getElementById('opt-otype').value;
+  document.getElementById('opt-lp-group').style.display = t === 'LIMIT' ? 'block' : 'none';
+}
+
+// ─────────────────────────────────────────────
+// OPTIONS — CHAIN LOOKUP
+// ─────────────────────────────────────────────
+async function loadOptionChain() {
+  const underlying = document.getElementById('opt-underlying').value.trim().toUpperCase();
+  if (!underlying) return;
+
+  const tbody = document.getElementById('opt-chain-body');
+  tbody.innerHTML = '<tr><td colspan="9" class="loading">Loading contracts…</td></tr>';
+
+  const params = new URLSearchParams({ underlying });
+  const expGte = document.getElementById('opt-exp-gte').value;
+  const expLte = document.getElementById('opt-exp-lte').value;
+  const type   = document.getElementById('opt-type').value;
+  const sMin   = document.getElementById('opt-strike-min').value;
+  const sMax   = document.getElementById('opt-strike-max').value;
+
+  if (expGte) params.set('expiry_gte', expGte);
+  if (expLte) params.set('expiry_lte', expLte);
+  if (type)   params.set('contract_type', type);
+  if (sMin)   params.set('strike_gte', sMin);
+  if (sMax)   params.set('strike_lte', sMax);
+
+  const contracts = await apiFetch('/api/options/contracts?' + params.toString());
+  if (!contracts || !contracts.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">No contracts found.</td></tr>';
+    return;
+  }
+
+  // Fetch live quotes for all contract symbols
+  const syms = contracts.map(c => c.symbol).join(',');
+  const quotes = await apiFetch('/api/options/quotes?symbols=' + encodeURIComponent(syms)) ?? {};
+
+  tbody.innerHTML = contracts.map(c => {
+    const q   = quotes[c.symbol] ?? {};
+    const bid = q.bid != null ? fmt(q.bid) : '—';
+    const ask = q.ask != null ? fmt(q.ask) : '—';
+    const mid = q.mid != null ? fmt(q.mid) : '—';
+    const typeCls = c.type === 'call' ? 'up' : 'dn';
+    return `<tr>
+      <td style="font-size:11px;font-family:monospace">${c.symbol}</td>
+      <td class="${typeCls}" style="font-weight:500;text-transform:capitalize">${c.type}</td>
+      <td>${fmt(parseFloat(c.strike), 2)}</td>
+      <td>${c.expiry}</td>
+      <td>${bid}</td>
+      <td>${ask}</td>
+      <td style="font-weight:500">${mid}</td>
+      <td style="font-size:12px;color:var(--text-secondary)">${c.open_interest}</td>
+      <td><button onclick="prefillOption('${c.symbol}', '${q.mid ?? ''}')"
+            style="font-size:11px;padding:3px 8px;background:var(--blue);color:#fff;border:none;border-radius:4px;cursor:pointer">
+          Trade
+        </button></td>
+    </tr>`;
+  }).join('');
+}
+
+function prefillOption(symbol, midPrice) {
+  document.getElementById('opt-sym').value = symbol;
+  document.getElementById('opt-ps').textContent = symbol;
+  if (midPrice) document.getElementById('opt-lp').value = parseFloat(midPrice).toFixed(2);
+}
+
+// ─────────────────────────────────────────────
+// OPTIONS — SUBMIT ORDER
+// ─────────────────────────────────────────────
+async function submitOptionOrder() {
+  const btn    = document.getElementById('opt-obtn');
+  const sym    = document.getElementById('opt-sym').value.trim();
+  const qty    = parseInt(document.getElementById('opt-qty').value);
+  const type   = document.getElementById('opt-otype').value;
+  const tif    = document.getElementById('opt-tif').value;
+  const lp     = document.getElementById('opt-lp').value;
+
+  if (!sym || !qty || qty < 1) {
+    showConf(false, 'Please enter a valid option symbol and quantity.');
+    return;
+  }
+  if (type === 'LIMIT' && !lp) {
+    showConf(false, 'Limit price required for limit orders.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  const payload = {
+    option_symbol: sym,
+    side:          optDir,
+    order_type:    type,
+    quantity:      qty,
+    time_in_force: tif,
+  };
+  if (type === 'LIMIT' && lp) payload.limit_price = parseFloat(lp);
+
+  const res = await apiFetch('/api/options/place', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(payload),
+  });
+
+  btn.disabled = false;
+  setOptDir(optDir);
+
+  if (res && !res.error) {
+    showConf(true, optDir + ' ' + qty + ' contract(s) of ' + sym + ' submitted.');
+    loadOrders();
+    loadBalance();
+  } else {
+    showConf(false, 'Order failed: ' + (res?.detail ?? res?.message ?? 'Unknown error.'));
+  }
+}
+
+// ─────────────────────────────────────────────
+// WATCHLIST — EDITOR
+// ─────────────────────────────────────────────
+function toggleWatchlistEditor() {
+  const ed = document.getElementById('wl-editor');
+  const visible = ed.style.display !== 'none';
+  if (!visible) {
+    // Pre-fill with current watchlist
+    document.getElementById('wl-input').value = WATCHLIST.map(w => w.symbol).join(', ');
+    document.getElementById('wl-editor-msg').textContent = '';
+  }
+  ed.style.display = visible ? 'none' : 'block';
+}
+
+async function saveWatchlist() {
+  const raw = document.getElementById('wl-input').value;
+  const symbols = raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  if (!symbols.length) return;
+
+  const msg = document.getElementById('wl-editor-msg');
+  msg.style.color = 'var(--text-secondary)';
+  msg.textContent = 'Saving…';
+
+  const res = await apiFetch('/api/watchlist', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(symbols),
+  });
+
+  if (res) {
+    // Update local WATCHLIST array
+    WATCHLIST.length = 0;
+    res.forEach(s => WATCHLIST.push({ symbol: s, name: s }));
+    msg.style.color = 'var(--green)';
+    msg.textContent = 'Saved! Reloading quotes…';
+    document.getElementById('wl-editor').style.display = 'none';
+    liveQuotes = {};
+    await loadWatchlistQuotes();
+  } else {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Failed to save. Try again.';
+  }
+}
+
+// ─────────────────────────────────────────────
+// WATCHLIST — LOAD FROM SERVER ON INIT
+// ─────────────────────────────────────────────
+async function loadServerWatchlist() {
+  const data = await apiFetch('/api/watchlist');
+  if (data && Array.isArray(data)) {
+    WATCHLIST.length = 0;
+    data.forEach(s => WATCHLIST.push({ symbol: s, name: s }));
+  }
+}
+
+// ─────────────────────────────────────────────
+// TRADE — QUICK QUOTE LOOKUP
+// ─────────────────────────────────────────────
+async function fetchQuickQuote() {
+  const sym = document.getElementById('qqsym').value.trim().toUpperCase();
+  if (!sym) return;
+  const box = document.getElementById('qq-result');
+  box.style.display = 'block';
+  box.innerHTML = '<span style="color:var(--text-secondary)">Loading…</span>';
+
+  const data = await apiFetch('/api/quotes?symbols=' + sym);
+  const q = data?.[sym];
+  if (!q || q.last == null) {
+    box.innerHTML = '<span style="color:var(--red)">No data found for ' + sym + '</span>';
+    return;
+  }
+
+  const chgPct = q.prev_close ? ((q.last - q.prev_close) / q.prev_close * 100) : null;
+  const chgCls = chgPct != null ? colorClass(chgPct) : '';
+  box.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-weight:600;font-size:15px">${sym}</span>
+      <span style="font-size:18px;font-weight:600">${fmt(q.last)}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:12px">
+      <div><span style="color:var(--text-secondary)">Change</span><br><span class="${chgCls}">${chgPct != null ? fmtPct(chgPct) : '—'}</span></div>
+      <div><span style="color:var(--text-secondary)">Open</span><br>${fmt(q.open)}</div>
+      <div><span style="color:var(--text-secondary)">Prev close</span><br>${fmt(q.prev_close)}</div>
+      <div><span style="color:var(--text-secondary)">High</span><br>${fmt(q.high)}</div>
+      <div><span style="color:var(--text-secondary)">Low</span><br>${fmt(q.low)}</div>
+      <div><span style="color:var(--text-secondary)">Volume</span><br>${q.volume ? q.volume.toLocaleString() : '—'}</div>
+    </div>
+    <button onclick="document.getElementById('tsym').value='${sym}';document.getElementById('qq-result').style.display='none';updatePreview()"
+      style="margin-top:10px;width:100%;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px;cursor:pointer;font-size:12px">
+      Use ${sym} in order form
+    </button>`;
+}
+
+// ─────────────────────────────────────────────
+// RESEARCH — FILE PARSER
+// ─────────────────────────────────────────────
+let rsFileData = null;
+let rsFileName = '';
+let rsFileType = '';
+
+function handleRsDrop(e) {
+  e.preventDefault();
+  document.getElementById('rs-drop').style.background = '';
+  const file = e.dataTransfer.files[0];
+  if (file) loadRsFile(file);
+}
+
+function handleRsFile(e) {
+  const file = e.target.files[0];
+  if (file) loadRsFile(file);
+}
+
+function loadRsFile(file) {
+  rsFileName = file.name;
+  rsFileType = file.name.split('.').pop().toLowerCase();
+  const maxMB = 10;
+  if (file.size > maxMB * 1024 * 1024) {
+    alert('File too large. Max 10MB.');
+    return;
+  }
+  const nameEl = document.getElementById('rs-file-name');
+  nameEl.style.display = 'block';
+  nameEl.textContent = '📎 ' + file.name + ' (' + (file.size / 1024).toFixed(0) + ' KB)';
+
+  const reader = new FileReader();
+  reader.onload = (ev) => { rsFileData = ev.target.result.split(',')[1]; };
+  reader.readAsDataURL(file);
+}
+
+async function runResearch() {
+  if (!rsFileData) { alert('Please upload a file first.'); return; }
+
+  const focus = document.getElementById('rs-prompt').value.trim();
+  const panel = document.getElementById('rs-result-panel');
+  const result = document.getElementById('rs-result');
+  const tag    = document.getElementById('rs-file-tag');
+
+  panel.style.display = 'block';
+  tag.textContent = rsFileName;
+  result.textContent = 'Analysing…';
+
+  const systemPrompt = `You are a financial analyst assistant. The user has uploaded a financial document (Bloomberg export, annual report, or similar).
+Extract and present a structured breakdown covering:
+1. Company / instrument overview
+2. Key financial metrics (revenue, EBITDA, net income, EPS, margins)
+3. Balance sheet highlights (debt, cash, equity)
+4. Valuation metrics (P/E, EV/EBITDA, P/B if available)
+5. Growth trends (YoY comparisons where visible)
+6. Red flags or notable risks
+7. Summary verdict (1-2 sentences)
+
+Be concise and factual. If data is missing, say so. Do not hallucinate numbers.
+${focus ? 'User focus: ' + focus : ''}`;
+
+  let userContent;
+  if (rsFileType === 'pdf') {
+    userContent = [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: rsFileData } },
+      { type: 'text', text: 'Please analyse this financial document and provide a structured breakdown.' }
+    ];
+  } else {
+    // CSV / XLSX — send as text after decoding base64
+    const decoded = atob(rsFileData);
+    userContent = [{ type: 'text', text: 'Financial data file (' + rsFileName + '):\n\n' + decoded + '\n\nPlease analyse this and provide a structured breakdown.' }];
+  }
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }],
+      }),
+    });
+    const data = await response.json();
+    const text = data.content?.filter(b => b.type === 'text').map(b => b.text).join('\n') ?? 'No response.';
+    result.textContent = text;
+  } catch (err) {
+    result.textContent = 'Error: ' + err.message;
+  }
+}
+
+// ─────────────────────────────────────────────
 // INIT — load all data on page open
 // ─────────────────────────────────────────────
 (async function init() {
+  await loadServerWatchlist();
   await Promise.all([loadBalance(), loadPositions(), loadOrders()]);
   loadIndexData();
   loadWatchlistQuotes();
   updatePreview();
+  setOptDir('BUY');
 })();
 </script>
 </body>

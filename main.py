@@ -1,5 +1,6 @@
 import os
 import secrets
+import json
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -10,8 +11,11 @@ from pydantic import BaseModel
 from alpaca_client import (
     fetch_balance, fetch_positions, fetch_orders,
     place_order as _place_order,
+    place_option_order as _place_option_order,
     cancel_order as _cancel_order,
     fetch_quotes,
+    fetch_option_contracts,
+    fetch_option_quotes,
 )
 
 app = FastAPI(title="SSIF Dashboard")
@@ -19,7 +23,21 @@ security = HTTPBasic()
 
 TEAM_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "changeme")
 
-WATCHLIST = ["META", "GOOGL", "TSLA", "AMD", "GLD", "TLT"]
+# Default watchlist — persisted in watchlist.json if edited by team
+WATCHLIST_FILE = "watchlist.json"
+DEFAULT_WATCHLIST = ["META", "GOOGL", "TSLA", "AMD", "GLD", "TLT"]
+
+
+def load_watchlist() -> list[str]:
+    if os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE) as f:
+            return json.load(f)
+    return DEFAULT_WATCHLIST
+
+
+def save_watchlist(symbols: list[str]):
+    with open(WATCHLIST_FILE, "w") as f:
+        json.dump(symbols, f)
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
@@ -53,25 +71,41 @@ def get_orders(user: str = Depends(auth)):
     return fetch_orders()
 
 
+# ── Watchlist ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/watchlist")
+def get_watchlist(user: str = Depends(auth)):
+    return load_watchlist()
+
+@app.post("/api/watchlist")
+def update_watchlist(symbols: list[str], user: str = Depends(auth)):
+    cleaned = [s.strip().upper() for s in symbols if s.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Watchlist cannot be empty")
+    save_watchlist(cleaned)
+    return cleaned
+
+
 # ── Market data ────────────────────────────────────────────────────────────────
 
 @app.get("/api/quotes")
-def get_quotes(symbols: str = ",".join(WATCHLIST), user: str = Depends(auth)):
-    """Pass ?symbols=AAPL,TSLA or defaults to watchlist."""
+def get_quotes(symbols: str = "", user: str = Depends(auth)):
     sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not sym_list:
+        sym_list = load_watchlist()
     return fetch_quotes(sym_list)
 
 
-# ── Trading ────────────────────────────────────────────────────────────────────
+# ── Equity trading ─────────────────────────────────────────────────────────────
 
 class OrderRequest(BaseModel):
     symbol: str
-    side: str                    # "BUY" or "SELL"
-    order_type: str              # "MARKET", "LIMIT", "STOP", "STOP_LIMIT"
+    side: str
+    order_type: str
     quantity: str
     limit_price: str | None = None
     stop_price: str | None = None
-    time_in_force: str = "day"   # "day" or "gtc"
+    time_in_force: str = "day"
 
 
 @app.post("/api/orders/place")
@@ -91,26 +125,59 @@ def cancel_order(order_id: str, user: str = Depends(auth)):
     return _cancel_order(order_id)
 
 
+# ── Options ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/options/contracts")
+def get_option_contracts(
+    underlying: str,
+    expiry_gte: str | None = None,
+    expiry_lte: str | None = None,
+    contract_type: str | None = None,
+    strike_gte: float | None = None,
+    strike_lte: float | None = None,
+    user: str = Depends(auth),
+):
+    return fetch_option_contracts(
+        underlying=underlying,
+        expiry_gte=expiry_gte,
+        expiry_lte=expiry_lte,
+        contract_type=contract_type,
+        strike_gte=strike_gte,
+        strike_lte=strike_lte,
+    )
+
+@app.get("/api/options/quotes")
+def get_option_quotes(symbols: str, user: str = Depends(auth)):
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    return fetch_option_quotes(sym_list)
+
+
+class OptionOrderRequest(BaseModel):
+    option_symbol: str      # full OCC symbol e.g. AAPL240119C00150000
+    side: str               # "BUY" or "SELL"
+    order_type: str         # "MARKET" or "LIMIT"
+    quantity: int           # number of contracts
+    limit_price: float | None = None
+    time_in_force: str = "day"
+
+
+@app.post("/api/options/place")
+def place_option_order(order: OptionOrderRequest, user: str = Depends(auth)):
+    return _place_option_order(
+        option_symbol=order.option_symbol,
+        side=order.side,
+        order_type=order.order_type,
+        quantity=order.quantity,
+        limit_price=order.limit_price,
+        time_in_force=order.time_in_force,
+    )
+
+
 # ── Health ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-
-# ── Temporary debug — REMOVE AFTER FIXING 401 ─────────────────────────────────
-
-@app.get("/debug")
-def debug():
-    key = os.environ.get("ALPACA_API_KEY", "NOT SET")
-    secret = os.environ.get("ALPACA_API_SECRET", "NOT SET")
-    return {
-        "key_set": key != "NOT SET",
-        "key_length": len(key),
-        "key_prefix": key[:6] if len(key) > 6 else key,
-        "secret_set": secret != "NOT SET",
-        "secret_length": len(secret),
-    }
 
 
 # ── Frontend ───────────────────────────────────────────────────────────────────
